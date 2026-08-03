@@ -641,43 +641,46 @@ void sigaction_virtual_memory_manager::update_metadata(int sub_region_index) {
         "sigaction_virtual_memory_manager: update_metadata() - done");
 }
 
+
 void sigaction_virtual_memory_manager::evict_if_needed() {
     void* to_evict;
     std::cout << "current memory size: " << present_blocks.size() * m_block_size << std::endl;
     std::cout << "max memory size: " << m_max_mem_size << std::endl;
     if ((present_blocks.size()*m_block_size) >= m_max_mem_size){
-        SPDLOG_LOGGER_INFO(spdlog::default_logger(), "virtual_memory_manager: evict_if_needed() - Evicting");
-        if (clean_lru.size() > 0){
-        to_evict = (void*) clean_lru.back();
-        SPDLOG_LOGGER_INFO(spdlog::default_logger(), "virtual_memory_manager: evict_if_needed() - Evicting clean block: {}", ((uint64_t) to_evict - (uint64_t) m_region_start_address) / m_block_size);
-        clean_lru.pop_back();
-        }
-        else{
-        // std::cout << "I am failing, bye!" << std::endl;
-        to_evict = (void*) dirty_lru.back();
-        dirty_lru.pop_back();
-        // std::cout << "Hello from the other side" << std::endl;
-        uint64_t block_index = ((uint64_t) to_evict - (uint64_t) m_region_start_address) / m_block_size;
-        SPDLOG_LOGGER_INFO(spdlog::default_logger(), "virtual_memory_manager: evict_if_needed() - Stashing block: {}", block_index);
-        if (!m_block_storage->stash_block(to_evict, block_index)){
-            SPDLOG_LOGGER_ERROR(spdlog::default_logger(), "virtual_memory_manager: Error stashing block with index {}", block_index);
+        while((present_blocks.size()*m_block_size) >= m_max_mem_size * 0.9){
+            SPDLOG_LOGGER_INFO(spdlog::default_logger(), "virtual_memory_manager: evict_if_needed() - Evicting");
+            if (clean_lru.size() > 0){
+            to_evict = (void*) clean_lru.back();
+            SPDLOG_LOGGER_INFO(spdlog::default_logger(), "virtual_memory_manager: evict_if_needed() - Evicting clean block: {}", ((uint64_t) to_evict - (uint64_t) m_region_start_address) / m_block_size);
+            clean_lru.pop_back();
+            }
+            else{
+            // std::cout << "I am failing, bye!" << std::endl;
+            to_evict = (void*) dirty_lru.back();
+            dirty_lru.pop_back();
+            // std::cout << "Hello from the other side" << std::endl;
+            uint64_t block_index = ((uint64_t) to_evict - (uint64_t) m_region_start_address) / m_block_size;
+            SPDLOG_LOGGER_INFO(spdlog::default_logger(), "virtual_memory_manager: evict_if_needed() - Stashing block: {}", block_index);
+            if (!m_block_storage->stash_block(to_evict, block_index)){
+                SPDLOG_LOGGER_ERROR(spdlog::default_logger(), "virtual_memory_manager: Error stashing block with index {}", block_index);
+                exit(-1);
+            }
+            stash_set.insert((uint64_t) to_evict);
+            }
+
+            int protect_status = mprotect(to_evict, m_block_size, PROT_NONE);
+            if (protect_status == -1){
+            SPDLOG_LOGGER_ERROR(spdlog::default_logger(), "virtual_memory_manager: Error evicting address {}", to_evict);
             exit(-1);
-        }
-        stash_set.insert((uint64_t) to_evict);
-        }
+            }
 
-        int protect_status = mprotect(to_evict, m_block_size, PROT_NONE);
-        if (protect_status == -1){
-        SPDLOG_LOGGER_ERROR(spdlog::default_logger(), "virtual_memory_manager: Error evicting address {}", to_evict);
-        exit(-1);
-        }
+            int madvise_status = madvise(to_evict, m_block_size, MADV_DONTNEED);
+            if (madvise_status == -1){
+            SPDLOG_LOGGER_ERROR(spdlog::default_logger(), "virtual_memory_manager: Error madvising address {}", to_evict);
+            exit(-1);
+            }
 
-        int madvise_status = madvise(to_evict, m_block_size, MADV_DONTNEED);
-        if (madvise_status == -1){
-        SPDLOG_LOGGER_ERROR(spdlog::default_logger(), "virtual_memory_manager: Error madvising address {}", to_evict);
-        exit(-1);
+            present_blocks.erase((uint64_t) to_evict);
         }
-
-        present_blocks.erase((uint64_t) to_evict);
     }
 }
